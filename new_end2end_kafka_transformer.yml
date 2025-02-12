@@ -1,0 +1,35 @@
+DATABASE: testdb
+USER: gpadmin
+PASSWORD: password
+HOST: localhost
+PORT: 6000
+VERSION: 2
+KAFKA:
+  INPUT:
+    SOURCE:
+      BROKERS: localhost:9092
+      TOPIC: test1
+    TRANSFORMER:
+      PATH: /tmp/avro-transformer.so
+      ON_INIT: SimpleTransformOnInit
+      TRANSFORM: SimpleTransform
+      PROPERTIES:
+        name: avro-transformer
+        schema_file: /tmp/avro_3.avsc
+    VALUE:
+      COLUMNS:
+        - NAME: username
+          TYPE: text
+        - NAME: tweet
+          TYPE: text
+        - NAME: timestamp
+          TYPE: timestamp
+        - NAME: photo
+          TYPE: text
+      FORMAT: csv
+      CSV_OPTION:
+          DELIMITER: ","
+    ERROR_LIMIT: 25
+  OUTPUT:
+    TABLE: target_avro
+    MODE: INSERT

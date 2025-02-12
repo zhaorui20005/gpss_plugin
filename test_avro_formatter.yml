@@ -1,0 +1,23 @@
+DATABASE: testdb
+USER: gpadmin
+HOST: localhost
+PORT: 15432
+VERSION: 2
+KAFKA:
+   INPUT:
+      SOURCE:
+        BROKERS: localhost:9092
+        TOPIC: test1
+      VALUE:
+          COLUMNS:
+            - NAME: c1
+              TYPE: json
+          FORMAT: avro
+          AVRO_OPTION:
+            SCHEMA_PATH_ON_GPDB: /tmp/avro_3.avsc
+      ERROR_LIMIT: 0
+   OUTPUT:
+      TABLE: tbl_avro
+   COMMIT:
+      MAX_ROW: 1000
+      MINIMAL_INTERVAL: 2000
