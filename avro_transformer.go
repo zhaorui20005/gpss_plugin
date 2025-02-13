@@ -16,6 +16,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +31,7 @@ import (
 // nolint
 var ErrInitMethodUnexpectedInvoked = errors.New("init method is invoked 0 or multi times")
 var ErrNoSchemaFileSpecified = errors.New("no schema file or URL specified")
+var ErrNeedColumnNumber = errors.New("need to set column_number when dynamic_csv is set")
 
 // initTimes records the count which init method is invoked
 // nolint
@@ -39,6 +42,10 @@ var name string
 var schemaString string
 var registryURL string
 var schemaValue sync.Map
+
+var csvColumnNum int
+var csvValueType map[string]string
+var dynamicOrder bool
 
 // SchemaRegistryClient defines an interface for fetching schemas from a schema registry.
 type SchemaRegistryClient interface {
@@ -104,6 +111,36 @@ func SimpleTransformOnInit(ctx common.BaseContext) error {
 			return err
 		}
 		schemaString = string(schemaStr)
+	}
+	dynamicStr, ok := properties["dynamic_csv"]
+	if ok {
+		dynamicOrder, _ = strconv.ParseBool(dynamicStr)
+	}
+	if dynamicOrder {
+		csvValueType = make(map[string]string)
+		csvColumnNumStr, ok := properties["column_number"]
+		if !ok {
+			return ErrNeedColumnNumber
+		}
+		var err error
+		csvColumnNum, err = strconv.Atoi(csvColumnNumStr)
+		if err != nil {
+			return err
+		}
+		for i := 1; i <= csvColumnNum; i++ {
+			valueStr := fmt.Sprintf("value_%d", i)
+			valueType := fmt.Sprintf("type_%d", i)
+			valueString, existance := properties[valueStr]
+			if !existance {
+				return fmt.Errorf("the value_%d is missing", i)
+			}
+			csvValueType[valueStr] = valueString
+			typeString, existance := properties[valueType]
+			if !existance {
+				return fmt.Errorf("the value_%d is missing", i)
+			}
+			csvValueType[valueType] = typeString
+		}
 	}
 
 	ctx.GetLogger().Infof("plugin:%s init start...", name)
@@ -186,12 +223,21 @@ func SimpleTransform(ctx transformer.TransformContext) {
 		}
 
 		lines := []string{}
-		lines = append(lines, record["username"].(string))
-		lines = append(lines, record["tweet"].(string))
-		t := time.Unix(record["timestamp"].(int64), 0)
 
-		lines = append(lines, fmt.Sprint(t.Format("2006-01-02 15:04:05")))
-		lines = append(lines, string((record["photo"].([]uint8))[0]))
+		if dynamicOrder {
+			err = formatJsonToLines(record, &lines)
+			if err != nil {
+				logger.Errorf("formatToLines failed with error:%v", err)
+				break
+			}
+		} else {
+			lines = append(lines, record["username"].(string))
+			lines = append(lines, record["tweet"].(string))
+			t := time.Unix(record["timestamp"].(int64), 0)
+
+			lines = append(lines, fmt.Sprint(t.Format("2006-01-02 15:04:05")))
+			lines = append(lines, string((record["photo"].([]uint8))[0]))
+		}
 
 		wr.Write(lines)
 		wr.Flush()
@@ -203,4 +249,52 @@ func SimpleTransform(ctx transformer.TransformContext) {
 	ctx.SetTransformStatus(transformer.TransformStatusAccept)
 
 	logger.Infof("finished to transform using %s", name)
+}
+
+// No error handling
+func formatJsonToLines(record map[string]interface{}, lines *[]string) error {
+	for i := 1; i <= csvColumnNum; i++ {
+		valueStr := fmt.Sprintf("value_%d", i)
+		valueType := fmt.Sprintf("type_%d", i)
+		addColumnToLines(record, lines, valueStr, valueType)
+	}
+	return nil
+}
+func addColumnToLines(record interface{}, lines *[]string, valueStr string, typeStr string) error {
+	index := strings.Index(valueStr, "/")
+	if index != -1 {
+		previousStr := valueStr[0:index]
+		postStr := valueStr[index+1:]
+		if indexNum, err := strconv.Atoi(previousStr); err == nil {
+			target, _ := record.([]interface{})
+			return addColumnToLines(target[indexNum], lines, postStr, typeStr)
+		} else {
+			target, _ := record.(map[string]interface{})
+			return addColumnToLines(target[previousStr], lines, postStr, typeStr)
+		}
+	}
+	if indexNum, err := strconv.Atoi(valueStr); err == nil {
+		target, _ := record.([]interface{})
+
+		switch typeStr {
+		case "timestamp":
+			t := time.Unix(target[indexNum].(int64), 0)
+			*lines = append(*lines, fmt.Sprint(t.Format("2006-01-02 15:04:05")))
+		default:
+			*lines = append(*lines, fmt.Sprintf("%v", target[indexNum]))
+		}
+	} else {
+		fmt.Printf("The type of record is %T:%v\n", record, record)
+		target, ok := record.(map[string]interface{})
+		fmt.Printf("OK is %v, The type of target is %T:%v\n", ok, target, target)
+
+		switch typeStr {
+		case "timestamp":
+			t := time.Unix(target[valueStr].(int64), 0)
+			*lines = append(*lines, fmt.Sprint(t.Format("2006-01-02 15:04:05")))
+		default:
+			*lines = append(*lines, fmt.Sprintf("%v", target[valueStr]))
+		}
+	}
+	return nil
 }
