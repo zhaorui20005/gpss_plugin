@@ -12,5 +12,6 @@ require (
 	github.com/karrick/gorill v1.10.3 // indirect
 	github.com/linkedin/goavro v2.1.0+incompatible // indirect
 	github.com/sirupsen/logrus v1.9.0 // indirect
+	github.com/stretchr/testify v1.7.5 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 )
